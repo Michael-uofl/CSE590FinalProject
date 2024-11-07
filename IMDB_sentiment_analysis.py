@@ -1,207 +1,87 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <dirent.h>
 
-struct Node {
-    int value;
-    struct Node *next;
-    struct Node *prev;
-};
+# imdb_sentiment_analysis.py
 
-// List struct to maintain head and tail for the linked list
-struct List {
-    struct Node *head;
-    struct Node *tail;
-    int size;
-    int max_size; // The maximum number of nodes allowed (K)
-};
+import numpy as np
+from tensorflow.keras.datasets import imdb
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import nltk
+from nltk.corpus import stopwords
 
-// Function to create a new node
-struct Node *create_node(int value) {
-    struct Node *node = malloc(sizeof(struct Node));
-    if (node == NULL) {
-        fprintf (stderr, "%s: Couldn't create memory for the node; %s\n", "linkedlist", strerror(errno));
-    exit(-1);
-  }
-    node->value = value;
-    node->next = NULL;
-    node->prev = NULL;
-    return node;
-}
+# Download NLTK data
+nltk.download('stopwords')
 
-// Function to create an empty list with a max size
-struct List *create_list() {
-  struct List *list = malloc(sizeof(struct List));
-  if (list == NULL) {
-    fprintf (stderr, "%s: Couldn't create memory for the list; %s\n", "linkedlist", strerror (errno));
-    exit(-1);
-  }
-  list->head = NULL;
-  list->tail = NULL;
-  return list;
-}
+# Load IMDb dataset
+def load_imdb_dataset():
+    (X_train, y_train), (X_test, y_test) = imdb.load_data(num_words=50000)
+    return X_train, y_train, X_test, y_test
 
-// Function to check if a value already exists in the list
-int find_by_value(struct List *list, int value) {
-    struct Node *current = list->head;
-    while (current != NULL) {
-        if (current->value == value) {
-            return 1; // Value found
-        }
-        current = current->next;
-    }
-    return 0; // Value not found
-}
+# Decode reviews from integer-encoded format to text
+def decode_review(review, index_to_word):
+    return " ".join([index_to_word.get(i, "?") for i in review])
 
-// Insert a value in sorted order (largest to smallest) in the list
-void insert_sorted(struct List *list, int value) {
-    if (find_by_value(list, value)) {
-        return; // Skip if value already exists
-    }
+def decode_reviews(X_data):
+    word_index = imdb.get_word_index()
+    index_to_word = {index + 3: word for word, index in word_index.items()}
+    index_to_word[0] = "<PAD>"
+    index_to_word[1] = "<START>"
+    index_to_word[2] = "<UNK>"
+    index_to_word[3] = "<UNUSED>"
+    return [decode_review(review, index_to_word) for review in X_data]
 
-    struct Node *newNode = create_node(value);
+# Remove stopwords from text
+def remove_stopwords(text):
+    stop_words = set(stopwords.words('english'))
+    return " ".join([word for word in text.split() if word not in stop_words])
 
-    // Insert at the beginning if empty or if new value is largest
-    if (list->head == NULL || value > list->head->value) {
-        newNode->next = list->head;
-        if (list->head != NULL) {
-            list->head->prev = newNode;
-        }
-        list->head = newNode;
-        if (list->tail == NULL) {
-            list->tail = newNode;
-        }
-    } else {
-        // Insert in sorted position
-        struct Node *current = list->head;
-        while (current->next != NULL && current->next->value > value) {
-            current = current->next;
-        }
-        newNode->next = current->next;
-        if (current->next != NULL) {
-            current->next->prev = newNode;
-        }
-        current->next = newNode;
-        newNode->prev = current;
-        if (newNode->next == NULL) {
-            list->tail = newNode;
-        }
-    }
+# Feature extraction using TF-IDF
+def extract_features_tfidf(X_train, X_test):
+    vectorizer = TfidfVectorizer(max_features=5000)
+    X_train_tfidf = vectorizer.fit_transform(X_train)
+    X_test_tfidf = vectorizer.transform(X_test)
+    return X_train_tfidf, X_test_tfidf
 
-    list->size++;
+# Model evaluation function
+def evaluate_model(model, X_train, X_test, y_train, y_test):
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred)
+    recall = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
+    print(f"{model.__class__.__name__} Performance:")
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
+    print(f"F1 Score: {f1:.4f}\n")
 
-    // Remove the last element if size exceeds max_size
-    if (list->size > list->max_size) {
-        struct Node *toDelete = list->tail;
-        list->tail = list->tail->prev;
-        if (list->tail != NULL) {
-            list->tail->next = NULL;
-        }
-        free(toDelete);
-        list->size--;
-    }
-}
+# Main function to run all steps
+def main():
+    # Load and decode data
+    X_train, y_train, X_test, y_test = load_imdb_dataset()
+    X_train_text = decode_reviews(X_train)
+    X_test_text = decode_reviews(X_test)
 
-// Function to process each integer in a file and add to the list
-void process_file(const char *filepath, struct List *list) {
-    FILE *file = fopen(filepath, "r");
-    if (file == NULL) {
-        fprintf(stderr, "Could not open file %s\n", filepath);
-        return;
-    }
+    # Remove stopwords
+    X_train_text = [remove_stopwords(review) for review in X_train_text]
+    X_test_text = [remove_stopwords(review) for review in X_test_text]
 
-    int value;
-    while (fscanf(file, "%d", &value) != EOF) {
-        insert_sorted(list, value);
-    }
+    # Extract TF-IDF features
+    X_train_tfidf, X_test_tfidf = extract_features_tfidf(X_train_text, X_test_text)
 
-    fclose(file);
-}
+    # Initialize models
+    nb_model = MultinomialNB()
+    svm_model = SVC(kernel='linear')
+    logreg_model = LogisticRegression(max_iter=1000)
 
-// Process all files in the given directory
-void process_directory(const char *directoryPath, struct List *list) {
-    DIR *dir = opendir(directoryPath);
-    if (dir == NULL) {
-        fprintf(stderr, "Could not open directory %s\n", directoryPath);
-        exit(1);
-    }
+    # Train and evaluate models
+    evaluate_model(nb_model, X_train_tfidf, X_test_tfidf, y_train, y_test)
+    evaluate_model(svm_model, X_train_tfidf, X_test_tfidf, y_train, y_test)
+    evaluate_model(logreg_model, X_train_tfidf, X_test_tfidf, y_train, y_test)
 
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.' || entry->d_name[strlen(entry->d_name) - 1] == '~') {
-            continue; // Skip hidden and temporary files
-        }
-        
-        char filepath[1024];
-        snprintf(filepath, sizeof(filepath), "%s/%s", directoryPath, entry->d_name);
-        process_file(filepath, list);
-    }
-
-    closedir(dir);
-}
-
-// Print the list (for debugging)
-void print_list(struct List *list) {
-    struct Node *ptr = list->head;
-    while (ptr != NULL) {
-        printf("%d ", ptr->value);
-        ptr = ptr->next;
-    }
-    printf("\n");
-}
-
-// Write the list contents to an output file
-void write_output(const char *outputFile, struct List *list) {
-    FILE *file = fopen(outputFile, "w");
-    if (file == NULL) {
-        fprintf(stderr, "Could not open output file %s\n", outputFile);
-        exit(1);
-    }
-
-    struct Node *current = list->head;
-    while (current != NULL) {
-        fprintf(file, "%d\n", current->value);
-        current = current->next;
-    }
-
-    fclose(file);
-}
-
-// Function to destroy the list and free memory
-void destroy_list(struct List *list) {
-    struct Node *current = list->head;
-    while (current != NULL) {
-        struct Node *toDelete = current;
-        current = current->next;
-        free(toDelete);
-    }
-    free(list);
-}
-
-// Main function to demonstrate the code
-int main(int argc, char *argv[]) {
-    if (argc != 4) {
-        fprintf(stderr, "Usage: %s <K> <directoryPath> <outputFile>\n", argv[0]);
-        return 1;
-    }
-
-    int K = atoi(argv[1]);
-    const char *directoryPath = argv[2];
-    const char *outputFile = argv[3];
-
-    // Create the list with max size K
-    struct List *list = create_list(K);
-
-    // Process directory and add top K integers
-    process_directory(directoryPath, list);
-
-    // Write the top K integers to output file
-    write_output(outputFile, list);
-
-    // Clean up memory
-    destroy_list(list);
-
-    return 0;
-}
+if __name__ == "__main__":
+    main()
