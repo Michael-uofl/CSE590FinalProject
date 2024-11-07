@@ -1,20 +1,48 @@
 
 # imdb_sentiment_analysis.py
-
+import re
 import numpy as np
 from tensorflow.keras.datasets import imdb
-from tensorflow.keras.preprocessing.sequence import pad_sequences
+
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from bs4 import BeautifulSoup
 import nltk
 from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
+from nltk.tokenize import word_tokenize
 
 # Download NLTK data
 nltk.download('stopwords')
+nltk.download('punkt')
+stemmer = PorterStemmer()
 
+def tokenize_text(text):
+    return word_tokenize(text)
+
+def remove_punctuation_numbers(text):
+    return re.sub(r'[^a-zA-Z\s]', '', text) # removing punctuation and numbers
+
+def to_lowercase(text):
+    return text.lower() # just a method to make the text lower case
+
+def remove_html(text):
+    return BeautifulSoup(text, "html.parser").get_text() # I wanna take out any kinda html tags that could be in the data
+
+def stem_text(text):
+    return ' '.join([stemmer.stem(word) for word in text.split()])
+
+
+def preprocess_text(text): # grabbing all my functions i created above and putting them into this method
+    text = to_lowercase(text)
+    text = remove_html(text)
+    text = remove_punctuation_numbers(text)
+    text = remove_stopwords(text) #this function is located below
+    text = stem_text(text) 
+    return text
 # Load IMDb dataset
 def load_imdb_dataset():
     (X_train, y_train), (X_test, y_test) = imdb.load_data(num_words=50000)
@@ -36,7 +64,7 @@ def decode_reviews(X_data):
 # Remove stopwords from text
 def remove_stopwords(text):
     stop_words = set(stopwords.words('english'))
-    return " ".join([word for word in text.split() if word not in stop_words])
+    return ' '.join([word for word in text.split() if word not in stop_words])
 
 # Feature extraction using TF-IDF
 def extract_features_tfidf(X_train, X_test):
@@ -66,9 +94,9 @@ def main():
     X_train_text = decode_reviews(X_train)
     X_test_text = decode_reviews(X_test)
 
-    # Remove stopwords
-    X_train_text = [remove_stopwords(review) for review in X_train_text]
-    X_test_text = [remove_stopwords(review) for review in X_test_text]
+    # Preprocess text data
+    X_train_text = [preprocess_text(review) for review in X_train_text]
+    X_test_text = [preprocess_text(review) for review in X_test_text]
 
     # Extract TF-IDF features
     X_train_tfidf, X_test_tfidf = extract_features_tfidf(X_train_text, X_test_text)
